@@ -18,6 +18,10 @@ cur = None  # 游标
 
 IGNORE_WORDS = set([])  # 重要度計算外とする語
 no_need_words = ["これ","ここ","こと","それ","ため","よう","さん","そこ","たち","ところ","それぞれ","これら","どれ","br","ます","です","する","\"\""]
+no_need_words1 = ["？","?"]
+no_need_words2 = ["っ","ぁ","ぃ","ぅ","ぇ","ヶ"]
+keep_words1 = ["ccc","CCC"]
+
 # ひらがな
 JP_HIRA = set([chr(i) for i in range(12353, 12436)])
 # カタカナ
@@ -227,8 +231,10 @@ def cmp_noun_list(data):
     for every_word in new_txt_list2:  # 去掉0和片假名长音'ー'开头的字符串
         if not every_word.startswith('0') and not every_word.startswith('０') and not every_word.startswith('ー'):
             new_txt_list3.append(every_word)
-    new_txt_list3 = [' '.join(i) for i in new_txt_list3]  # 不加这一句,重要度就是频率
-    cmp_nouns = new_txt_list3
+
+    new_txt_list4 = no_need_keyword_remove(new_txt_list3)
+    new_txt_list4 = [' '.join(i) for i in new_txt_list4]  # 不加这一句,重要度就是频率
+    cmp_nouns = new_txt_list4
     return cmp_nouns
 
 
@@ -416,7 +422,7 @@ def modify_agglutinative_lang(data):
     return data_disp
 
 
-def calculate_importance(president_txt,member_txt):
+def calculate_importance_for_total(president_txt,member_txt):
     tatext_president = president_txt
     tatext_member = member_txt
     # 複合語を抽出し、重要度を算出
@@ -440,12 +446,81 @@ def calculate_importance(president_txt,member_txt):
     sum_matching_degree = 0
     matches_keywords_count = 0  # 社员参照教师报告后,与教师有多少个关键字匹配
     for cmp_noun, value in data_collection_member.most_common():
+        para_keyword = modify_agglutinative_lang(cmp_noun)
         totalImportance_member += value[1]
         key_words_list_memeber.append(cmp_noun)
         if cmp_noun in key_words_list_president:
             matches_keywords_count += 1
             sum_matching_degree += value[1]
     return key_words_lenth_president,key_words_lenth_member,totalImportance_president,totalImportance_member,sum_matching_degree,matches_keywords_count
+
+
+def calculate_importance_for_detail(president_txt,member_txt):
+    tatext_president = president_txt
+    tatext_member = member_txt
+    # 複合語を抽出し、重要度を算出
+    frequency_president = cmp_noun_dict(tatext_president)
+    frequency_member = cmp_noun_dict(tatext_member)
+    LR_president = score_lr(frequency_president, ignore_words=IGNORE_WORDS, lr_mode=1, average_rate=1)
+    term_imp_president = term_importance(frequency_president, LR_president)
+    LR_member = score_lr(frequency_member, ignore_words=IGNORE_WORDS, lr_mode=1, average_rate=1)
+    term_imp_member = term_importance(frequency_member, LR_member)
+    # 重要度が高い順に並べ替えて出力
+    data_collection_president = collections.Counter(term_imp_president)
+    data_collection_member = collections.Counter(term_imp_member)
+    totalImportance_president, totalImportance_member = 0, 0 #教师重要度与社员重要度合计
+    key_words_lenth_president = len(data_collection_president)
+    key_words_lenth_member = len(data_collection_member)
+    key_words_list_president = [] #教师词列表
+    key_words_list_memeber = []  #社员词列表
+    member_sum_matching_degree = 0  # 社员参照教师TOP后,与教师有关键字匹配上的词的重要度合计(社员的)
+    member_matches_keywords_count = 0  # 社员参照教师TOP后,与教师有多少个关键字匹配(社员的)
+    frequency_ratio = 0 #社员所有能与教师的词匹配上的词的频度合计/教师所有的词的频度合计
+    importance_ratio = 0 #社员所有能与教师的词匹配上的词的重要度合计/教师所有的词的重要度合计
+    append_list = []
+
+    for cmp_noun, value in data_collection_member.most_common(): #社员
+        totalImportance_member += value[1]  #社员重要度合计
+        key_words_list_memeber.append(cmp_noun)  #社员的词列表
+
+    for cmp_noun, value in data_collection_president.most_common(): #教师
+        totalImportance_president += value[1] #教师重要度合计
+        key_words_list_president.append(cmp_noun) #教师词列表
+
+        para_keyword = modify_agglutinative_lang(cmp_noun)
+        para_president_importance_degree = value[1]  # 教师每个词的重要度
+        para_president_keyword_frequency = value[0]  # 教师每个词的频度
+        para_member_matched_keyword_frequency = 0  # 社员与教师当前的词能匹配到的词频初始化为0
+        para_member_matched_keyword_importance_degree = 0  # 社员与教师当前的词能匹配到的词的重要度初始化为0
+        if cmp_noun in key_words_list_memeber:  # 如果教师的词出现在社员的词中
+            para_member_matched_keyword_importance_degree = data_collection_member.get(cmp_noun, 0)[1]   # 能匹配上社员的词,则社员的这个词的重要度就是社员自己TOP中的这个词的重要度
+            para_member_matched_keyword_frequency = data_collection_member.get(cmp_noun, 0)[0]  # 能匹配上社员的词,则社员的这个词的频度就是社员自己TOP中的这个词的频度
+            member_matches_keywords_count += 1
+            member_sum_matching_degree += data_collection_member.get(cmp_noun, 0)[1]  # 社员マッチ度合计
+        frequency_ratio = float(para_member_matched_keyword_frequency/para_president_keyword_frequency)
+        importance_ratio = float(para_member_matched_keyword_importance_degree/para_president_importance_degree)
+        append_list.append([para_keyword,para_president_importance_degree,para_member_matched_keyword_importance_degree,para_president_keyword_frequency,para_member_matched_keyword_frequency,frequency_ratio,importance_ratio])
+    return append_list
+
+
+    '''
+    for cmp_noun, value in data_collection_member.most_common(): #社员
+        para_keyword = modify_agglutinative_lang(cmp_noun)
+        para_report_year = report_year #年
+        para_report_week = coef_week_list[0] #周
+        para_member_importance_degree = value[1] #社员每个词的重要度
+        para_member_match_degree = 0 #社员每个词的マッチ度初始化为0
+        para_president_matched_keyword_frequency = 0 #教师与社员当前的词能匹配到的词频初始化为0
+        para_president_matched_keyword_importance_degree = 0 #教师与社员当前的词能匹配到的词的重要度初始化为0
+        if cmp_noun in key_words_list_president: #如果社员的词出现在教师的词中
+            para_member_match_degree = value[1] #能匹配上教师的词,则这个词マッチ度就是社员自己TOP中的这个词的重要度
+            para_president_matched_keyword_frequency = data_collection_president.get(cmp_noun,0)[0] #如果社员的这个词在教师的词列表中出现过,则取教师这个词的频度
+            para_president_matched_keyword_importance_degree = data_collection_president.get(cmp_noun,0)[1] #如果社员的这个词在教师的词列表中出现过,则取教师这个词的重要度
+            member_matches_keywords_count += 1
+            member_sum_matching_degree += value[1] #社员マッチ度合计
+        para_member_keyword_frequency = value[0] #社员每个词的频度
+    '''
+
 
 
 def get_year_week_from_Mst_date(current_date):
@@ -508,20 +583,14 @@ def read_dateConfig_file_set_year_week():
             raise ex
 
 
-def read_report_from_database(server, user, password, database,report_week,employee_code,report_year = datetime.datetime.now().year):
+def read_report_from_database(report_week,employee_code,report_year):
     '''
-    :param server:服务器名称
-    :param user:用户名
-    :param password:密码
-    :param database:数据库名
     :param report_year:top报告年份
     :param report_week:top报告周
     :param employee_code:社员号
     :return:top报告内容
     '''
     try:
-        conn = pymssql.connect(server, user, password, database)
-        cur = conn.cursor()
         sql = "select remark from report where report_year =%s and report_week =%s and employee_code =%s" \
               % (report_year, report_week, employee_code)
         cur.execute(sql)
@@ -541,7 +610,7 @@ def read_report_from_database(server, user, password, database,report_week,emplo
 
 
 
-def generate_allweeks_employeelist_data(employee_teacher_list, report_week_list, report_year):
+def generate_employeelist_total_data(employee_teacher_list, report_week_list, report_year):
     '''
     :param employee_teacher_list:要插入到rreport_est_automatic_multiple_teacher表的社员号+教师号列表
     :param report_year:top报告年份
@@ -555,26 +624,54 @@ def generate_allweeks_employeelist_data(employee_teacher_list, report_week_list,
         report_est_automatic_list = []
         for week in report_week_list:
             for employee_teacher in employee_teacher_list:
-                teacher_report = read_report_from_database(server, user, password, database, week, employee_teacher[1], report_year)  # 教师TOP报告内容
-                employee_report = read_report_from_database(server, user, password, database, week, employee_teacher[0], report_year)  # 社员TOP报告内容
+                teacher_report = read_report_from_database(week, employee_teacher[1], report_year)  # 教师TOP报告内容
+                employee_report = read_report_from_database(week, employee_teacher[0], report_year)  # 社员TOP报告内容
                 if teacher_report and employee_report:
-                    result = calculate_importance(teacher_report, employee_report)
+                    result = calculate_importance_for_total(teacher_report, employee_report)
                     importance_degree = str(result[3])
                     matching_degree = str(result[4])
                     add_list = [str(report_year),str(week),str(employee_teacher[0]),employee_teacher[1],importance_degree,matching_degree]
                     report_est_automatic_list.append(add_list)
         return report_est_automatic_list
     else:
-        logger.error("Call method generate_allweeks_employeelist_data() error!There is a null value in the parameters.")
+        logger.error("Call method generate_employeelist_total_data() error!There is a null value in the parameters.")
         raise
 
 
-def get_employee_and_teacher_list_from_table_report_target_multiple_teacher():
+def generate_employeelist_detail_data(employee_teacher_list, report_week_list, report_year):
+    '''
+    :param employee_teacher_list:要插入到rreport_est_automatic_multiple_teacher表的社员号+教师号列表
+    :param report_year:top报告年份
+    :param report_week_list:top报告周列表
+    :return:要插入到report_est_automatic_multiple_teacher表的list
+    '''
+    if employee_teacher_list and report_week_list and report_year:
+        report_year = report_year#年
+        report_week_list = report_week_list#周列表
+        employee_teacher_list = employee_teacher_list#社员号+教师号列表
+        report_est_automatic_list = []
+        for week in report_week_list:
+            for employee_teacher in employee_teacher_list:
+                teacher_report = read_report_from_database(week, employee_teacher[1], report_year)  # 教师TOP报告内容
+                employee_report = read_report_from_database(week, employee_teacher[0], report_year)  # 社员TOP报告内容
+                if teacher_report and employee_report:
+                    result = calculate_importance_for_detail(teacher_report, employee_report)
+                    add_list = [[str(report_year),str(week),str(employee_teacher[0]),employee_teacher[1],*item] for item in result]
+                    # report_est_automatic_list.append(add_list)
+                    for item in add_list:
+                        report_est_automatic_list.append(item)
+        return report_est_automatic_list
+    else:
+        logger.error("Call method generate_employeelist_detail_data() error!There is a null value in the parameters.")
+        raise
+
+
+def get_employee_teacher_list():
     '''
        :return:report_target表去重后的社员号+教师号列表
        '''
     try:
-        sql = " select distinct cast(employee_code as int),cast(teacher_code as int) from report_target_multiple_teacher_for_noun_merge "
+        sql = " select distinct cast(employee_code as int),cast(teacher_code as int) from report_target_multiple_teacher_for_noun "
         cur.execute(sql)
         rows = cur.fetchall()
         employee_teacher_list = []
@@ -588,51 +685,88 @@ def get_employee_and_teacher_list_from_table_report_target_multiple_teacher():
         logger.error("dbException:" + str(ex))
         raise ex
     except Exception as ex:
-        logger.error("Call method get_employee_and_teacher_list_from_table_report_target_multiple_teacher() error!")
+        logger.error("Call method get_employee_teacher_list() error!")
         logger.error("Exception:" + str(ex))
         raise ex
 
 
-def insert_report_est_automatic_multiple_teacher_total(datalist):
+def insert_report_est_multiple_teacher_noun_total(datalist):
     '''
     :param datalist:要插入数据的列表
     :return:无
     '''
     if datalist:
-        report_est_automatic_multiple_teacher_total_list = []
+        report_est_multiple_teacher_noun_total_list = []
         try:
             for one_row in datalist:
                 report_year = one_row[0]
                 report_week = one_row[1]
                 employee_code = one_row[2]
                 check_code = one_row[3]
-                importance_degree = round(float(one_row[4]))
-                matching_degree = round(float(one_row[5]))
-                report_est_automatic_multiple_teacher_total_list.append([report_year,report_week,employee_code,check_code,importance_degree,matching_degree])
-
-            report_est_automatic_multiple_teacher_total_list = [tuple(item) for item in report_est_automatic_multiple_teacher_total_list]
-            sql = ' insert into report_est_automatic_multiple_teacher_total (report_year, report_week, employee_code,check_code,importance_degree,matching_degree) ' \
+                importance_degree = one_row[4]
+                matching_degree = one_row[5]
+                report_est_multiple_teacher_noun_total_list.append([report_year,report_week,employee_code,check_code,importance_degree,matching_degree])
+            report_est_multiple_teacher_noun_total_list = [tuple(item) for item in report_est_multiple_teacher_noun_total_list]
+            sql = ' insert into report_est_multiple_teacher_noun_total (report_year, report_week, employee_code,check_code,importance_degree,matching_degree) ' \
                   ' values(%s, %s, %s, %s, %s, %s) '
-            cur.executemany(sql, report_est_automatic_multiple_teacher_total_list)
+            cur.executemany(sql, report_est_multiple_teacher_noun_total_list)
             conn.commit()
         except pymssql.Error as ex:
             logger.error("dbException:" + str(ex))
             raise ex
         except Exception as ex:
-            logger.error("Call method insert_report_est_automatic_multiple_teacher_total() error!")
+            logger.error("Call method insert_report_est_multiple_teacher_noun_total() error!")
             logger.error("Exception:"+str(ex))
             conn.rollback()
             raise ex
 
 
-def delete_current_data_from_report_est_automatic_multiple_teacher_total(report_year,report_week):
+def insert_report_est_multiple_teacher_for_noun_detail(datalist):
+    '''
+    :param datalist:要插入数据的列表
+    :return:无
+    '''
+    if datalist:
+        report_est_multiple_teacher_for_noun_detail = []
+        try:
+            '''
+            for one_row in datalist:
+                report_year = one_row[0]
+                report_week = one_row[1]
+                employee_code = one_row[2]
+                check_code = one_row[3]
+                keyword = one_row[4]
+                teacher_current_keyword_importance_degree = one_row[5]
+                member_current_keyword_importance_degree = one_row[6]
+                teacher_current_keyword_match_frequency = one_row[7]
+                member_current_keyword_match_frequency = one_row[8]
+                frequency_ratio = one_row[9]
+                importance_ratio = one_row[10]
+                report_est_multiple_teacher_for_noun_detail.append([report_year,report_week,employee_code,check_code,keyword,teacher_current_keyword_importance_degree,member_current_keyword_importance_degree,teacher_current_keyword_match_frequency,teacher_current_keyword_match_frequency,member_current_keyword_match_frequency,frequency_ratio,importance_ratio])
+            '''
+            report_est_multiple_teacher_noun_total_list = [tuple(item) for item in datalist]
+            sql = ' insert into report_est_multiple_teacher_for_noun_detail (report_year, report_week, employee_code,check_code,keyword,teacher_current_keyword_importance_degree,member_current_keyword_importance_degree,teacher_current_keyword_match_frequency,member_current_keyword_match_frequency,frequency_ratio,importance_ratio) ' \
+                  ' values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) '
+            cur.executemany(sql, report_est_multiple_teacher_noun_total_list)
+            conn.commit()
+        except pymssql.Error as ex:
+            logger.error("dbException:" + str(ex))
+            raise ex
+        except Exception as ex:
+            logger.error("Call method insert_report_est_multiple_teacher_noun_total() error!")
+            logger.error("Exception:"+str(ex))
+            conn.rollback()
+            raise ex
+
+
+def delete_current_data_from_report_est_multiple_teacher_noun_total(report_year,report_week):
     '''
     :param report_year:top报告年份
     :param report_week:top报告周
     :return:无
     '''
     try:
-        sql = ' delete from report_est_automatic_multiple_teacher_total where report_year = %s and report_week = %s' \
+        sql = ' delete from report_est_multiple_teacher_noun_total where report_year = %s and report_week = %s' \
               % (report_year, report_week[0])
         cur.execute(sql)
         conn.commit()
@@ -640,7 +774,28 @@ def delete_current_data_from_report_est_automatic_multiple_teacher_total(report_
         logger.error("dbException:" + str(ex))
         raise ex
     except Exception as ex:
-        logger.error("Call method delete_current_data_from_report_est_automatic_multiple_teacher_total() error!")
+        logger.error("Call method delete_current_data_from_report_est_multiple_teacher_noun_total() error!")
+        logger.error("Exception:" + str(ex))
+        conn.rollback()
+        raise ex
+
+
+def delete_current_data_from_report_est_multiple_teacher_for_noun_detail(report_year,report_week):
+    '''
+    :param report_year:top报告年份
+    :param report_week:top报告周
+    :return:无
+    '''
+    try:
+        sql = ' delete from report_est_multiple_teacher_for_noun_detail where report_year = %s and report_week = %s' \
+              % (report_year, report_week[0])
+        cur.execute(sql)
+        conn.commit()
+    except pymssql.Error as ex:
+        logger.error("dbException:" + str(ex))
+        raise ex
+    except Exception as ex:
+        logger.error("Call method delete_current_data_from_report_est_multiple_teacher_for_noun_detail() error!")
         logger.error("Exception:" + str(ex))
         conn.rollback()
         raise ex
@@ -701,11 +856,62 @@ def closeConn():
         raise ex
 
 
+def no_need_keyword_remove(para_keyword_list):
+    '''
+    处理要保留的关键字和不保留的关键字
+    :return:返回处理后的List
+    '''
+    keepWordList1=[]
+    keepWordList2=[]
+    keepWordList3=[]
+    removeList=[]
+    if para_keyword_list:
+        try:
+            for item1 in para_keyword_list:
+                flag1 = False
+                for mark1 in no_need_words1: #["？","?"]
+                    if item1.find(mark1)!=-1:
+                        flag1 = True
+                        removeList.append(item1)
+                        break
+                if flag1==False:
+                    keepWordList1.append(item1)
+
+            for item2 in keepWordList1:
+                flag2 = False
+                for mark2 in no_need_words2: #["っ","ぁ","ぃ","ぅ","ぇ","ヶ"]
+                    if item2.startswith(mark2) or item2.endswith(mark2):
+                        flag2 = True
+                        removeList.append(item2)
+                        break
+                if flag2 == False:
+                    keepWordList2.append(item2)
+
+            for item3 in keepWordList2:
+                if item3 in keep_words1: # ["ccc","CCC"]
+                    keepWordList3.append(item3)
+                else:
+                    if len(item3)<3: #长度小于3的词加入到List
+                        keepWordList3.append(item3)
+                    elif len(item3)>=3: #长度大于3的词
+                        str_repeat_list = [everyChar for everyChar in item3] #把词中的每一个字放到str_repeat_list
+                        str_repeat_list = list(set(str_repeat_list)) #利用set特性去重
+                        if len(str_repeat_list)>1: #不全是同一个字符则加入到List中
+                            keepWordList3.append(item3)
+                        else:
+                            removeList.append(item3)
+            return keepWordList3
+        except Exception as ex:
+            logger.error("Call method no_need_keyword_remove() error!")
+            logger.error("Exception:" + str(ex))
+            raise ex
+
+
 
 if __name__=="__main__":
     logger = write_log()  # 获取日志对象
     time_start = datetime.datetime.now()
-    start = time.clock()
+    start = time.perf_counter()
     logger.info("Program start,now time is:"+str(time_start))
     server,user,password,database = read_dateConfig_file_set_database()#读取配置文件中的数据库信息
     getConn()  # 数据库连接对象
@@ -716,13 +922,16 @@ if __name__=="__main__":
     read_dateConfig_file_set_year_week()#读配置文件设置report_year和coef_week_list
     logger.info("report_year:" + report_year)
     logger.info("report_week:" + str(coef_week_list[0]))
-    employee_and_teacher_list = get_employee_and_teacher_list_from_table_report_target_multiple_teacher()#从report_target_multiple_teacher表获取员工号和教师号列表(返回社员号和教师号列表)
-    delete_current_data_from_report_est_automatic_multiple_teacher_total(report_year, coef_week_list)#从report_est_automatic_multiple_teacher表删除当前周数据
-    data_addto_report_est_automatic_multiple_teacher_total = generate_allweeks_employeelist_data(employee_and_teacher_list, coef_week_list,report_year)#生成X年、X周、社员号X、教师数据的社员号X、重要度X、匹配度X
-    insert_report_est_automatic_multiple_teacher_total(data_addto_report_est_automatic_multiple_teacher_total)#插入到report_est_automatic_multiple_teacher
+    employee_and_teacher_list = get_employee_teacher_list()#从report_target_multiple_teacher_for_noun_detail表获取员工号和教师号列表(返回社员号和教师号列表)
+    delete_current_data_from_report_est_multiple_teacher_noun_total(report_year, coef_week_list)#从report_est_multiple_teacher_noun_total表删除当前周数据
+    data_addto_report_est_multiple_teacher_noun_total = generate_employeelist_total_data(employee_and_teacher_list, coef_week_list,report_year)#生成X年、X周、社员号X、教师数据的社员号X、重要度X、匹配度X
+    insert_report_est_multiple_teacher_noun_total(data_addto_report_est_multiple_teacher_noun_total)#插入到report_est_multiple_teacher_noun_total
+    delete_current_data_from_report_est_multiple_teacher_for_noun_detail(report_year,coef_week_list)# 从report_est_multiple_teacher_for_noun_detail表删除当前周数据
+    data_addto_report_est_multiple_teacher_for_noun_detail = generate_employeelist_detail_data(employee_and_teacher_list, coef_week_list, report_year)  # 生成X年、X周、社员号X、教师数据的社员号X、重要度X、匹配度X
+    insert_report_est_multiple_teacher_for_noun_detail(data_addto_report_est_multiple_teacher_for_noun_detail)  # 插入到report_est_multiple_teacher_for_noun_detail
     closeConn()
     time_end = datetime.datetime.now()
-    end = time.clock()
+    end = time.perf_counter()
     logger.info("Program end,now time is:"+str(time_end))
     logger.info("Program run : %f seconds" % (end - start))
 
